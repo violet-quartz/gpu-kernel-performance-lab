@@ -189,3 +189,12 @@ def test_rmsnorm_reference_valid_eps(eps):
     actual = rmsnorm_reference(x, torch.ones(4), eps)
     expected = torch.full_like(x, 1 / (1 + eps) ** 0.5)
     torch.testing.assert_close(actual, expected)
+
+def test():
+    x = torch.tensor([1e-4, 1e-4, 1e-4, 1e-4], dtype=torch.float16)
+    y = x.square()
+    print(y)
+    x_fp32 = x.to(torch.float32)
+    y_fp32 = x_fp32.square()
+    print(y_fp32)
+
