@@ -1,5 +1,5 @@
 import torch
-from common.validation import validate_rmsnorm_inputs
+from common.validation import validate_rmsnorm_inputs, validate_rmsnorm_output
 
 import triton
 import triton.language as tl
@@ -24,17 +24,25 @@ def rmsnorm_kernel(
     tl.store(output_ptr + pid * cols + offsets, output, mask=mask)
     
 
+def rmsnorm_triton_into(
+    x:torch.Tensor, # [M, N]
+    weight: torch.Tensor, # [N]
+    output: torch.Tensor, # [M, N]
+    eps: float = 1e-6):
+    if not x.is_cuda:
+        raise ValueError("x must be on CUDA")
+    validate_rmsnorm_inputs(x, weight, eps)
+    validate_rmsnorm_output(output, x, weight)
+    M, N = x.shape
+    BLOCK_SIZE = triton.next_power_of_2(N)
+    grid = (M,)
+    rmsnorm_kernel[grid](x, output, weight, eps, N, BLOCK_SIZE)
+
 def rmsnorm_triton(
     x: torch.Tensor, # [M, N]
     weight: torch.Tensor, # [N]
     eps: float = 1e-6
 ) -> torch.Tensor:
-    validate_rmsnorm_inputs(x, weight, eps)
-    if not x.is_cuda:
-        raise ValueError("x must be on CUDA")
-    M, N = x.shape
     output = torch.empty_like(x)
-    BLOCK_SIZE = triton.next_power_of_2(N)
-    grid = (M,)
-    rmsnorm_kernel[grid](x, output, weight, eps, N, BLOCK_SIZE)
+    rmsnorm_triton_into(x, weight, output, eps)
     return output

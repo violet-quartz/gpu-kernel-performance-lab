@@ -4,7 +4,7 @@ import csv
 import triton.testing
 import torch
 from references.rmsnorm import rmsnorm_reference
-from kernels.triton.rmsnorm import rmsnorm_triton
+from kernels.triton.rmsnorm import rmsnorm_triton, rmsnorm_triton_into
 
 # shapes = [(1, 4096), (16, 4096), (128, 4096), (1024, 4096), (128, 8192)]
 shapes = [(1, 4096), (1024, 4096)]
@@ -35,6 +35,7 @@ def main():
             for dtype in data_types:
                 x = torch.randn(shape, generator=generator, dtype=dtype).to("cuda")
                 weight = torch.randn(shape[-1], generator=generator, dtype=dtype).to("cuda")
+                output = torch.empty_like(x)
                 dtype_name = (
                     str(dtype)
                     .removeprefix("torch.")
@@ -51,6 +52,14 @@ def main():
                         "torch.nn.functional.rms_norm",
                         lambda: torch.nn.functional.rms_norm(
                             x, (shape[-1],), weight=weight, eps=eps
+                        ),
+                    )
+                )
+                implementations.append(
+                    (
+                        "triton_into",
+                        lambda: rmsnorm_triton_into(
+                            x, weight, output, eps
                         ),
                     )
                 )

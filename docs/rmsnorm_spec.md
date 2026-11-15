@@ -1,7 +1,7 @@
 # RMSNorm
 
 ```
-rmsnorm(input, weight, eps=1e-6)
+rmsnorm(x, weight, eps=1e-6)
 ```
 
 Apply Root Mean Square Layer Normalization over the last dimension of a two dimension Tensor.
@@ -22,7 +22,7 @@ $$
 - $\epsilon$：数值稳定项。
 
 ## Parameters
-- input (torch.Tensor): 2D Tensor with shape [M, N].
+- x (torch.Tensor): 2D Tensor with shape [M, N].
 - weight (torch.Tensor): 1D Tensor with shape [N].
 - eps (float, optional): a value added to the denominator for numerical stability. Default: 1e-6.
 
