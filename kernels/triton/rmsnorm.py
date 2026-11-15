@@ -29,9 +29,9 @@ def rmsnorm_triton_into(
     weight: torch.Tensor, # [N]
     output: torch.Tensor, # [M, N]
     eps: float = 1e-6):
+    validate_rmsnorm_inputs(x, weight, eps)
     if not x.is_cuda:
         raise ValueError("x must be on CUDA")
-    validate_rmsnorm_inputs(x, weight, eps)
     validate_rmsnorm_output(output, x, weight)
     M, N = x.shape
     BLOCK_SIZE = triton.next_power_of_2(N)

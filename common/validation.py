@@ -42,8 +42,6 @@ def validate_rmsnorm_inputs(x, weight, eps):
 
     if not x.is_contiguous() or not weight.is_contiguous():
         raise ValueError("x and weight must be contiguous")
-    if overlaps_contiguous(x, weight):
-        raise ValueError("Overlaps are not allowed between x and weight")
     if x.shape[0] == 0:
         raise ValueError("x's first dimension must be greater than 0")
     if x.shape[-1] == 0:
@@ -55,6 +53,8 @@ def validate_rmsnorm_inputs(x, weight, eps):
         raise ValueError("eps must be finite and greater than 0")
     
 def validate_rmsnorm_output(output, x, weight):
+    if not isinstance(output, torch.Tensor):
+        raise TypeError("output must be torch.Tensor")
     if output.shape != x.shape:
         raise ValueError("output should have the same shape with x")
     if output.dtype != x.dtype:

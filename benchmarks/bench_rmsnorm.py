@@ -94,7 +94,7 @@ def main():
                                     "implementation": implementation,
                                     "method": method,
                                     "run": run,
-                                    "latency_us": f"{latency_us:.2f}",
+                                    "latency_us": f"{latency_us:.6f}",
                                 }
                             )
                             results_file.flush()
