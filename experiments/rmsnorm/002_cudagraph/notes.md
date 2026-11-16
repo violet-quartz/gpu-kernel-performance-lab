@@ -7,28 +7,31 @@
 ## 2. 环境
 
 - GPU: NVIDIA RTX 4090
-- Shape: [1, 4096], [1024, 4096]
+- Shape: [1, 4096], [1024, 4096], [4096, 4096]
 - dtype: FP16
 - Software versions: PyTorch: 2.13.0+cu130, PyTorch CUDA: 13.0, Triton: 3.7.1
-- Code commit: 1bf414aa94665852df54c4f291d42d1d21b7c60d
+- Code commit: e99ea59f83055847f7ce3883a26c66d9cad56c0d
 
 ## 3. 实验结果
 
 | Shape | Implementation | do_bench (μs) | CUDA Graph (μs) |
 |---|---|---:|---:|
-| 1 × 4096 | Triton | 4.10 | 1.14 |
-| 1 × 4096 | PyTorch 官方 | 8.19 | 3.03 |
-| 1024 × 4096 | Triton | 20.48 | 5.92 |
-| 1024 × 4096 | PyTorch 官方 | 26.62 | 6.77 |
+| 1 × 4096 | Triton | 4.10 | 1.12 |
+| 1 × 4096 | PyTorch 官方 | 8.19 | 3.06 |
+| 1024 × 4096 | Triton | 20.48 | 5.80 |
+| 1024 × 4096 | PyTorch 官方 | 27.65 | 6.56 |
+| 4096 × 4096 | Triton | 76.80 | 17.99 |
+| 4096 × 4096 | PyTorch 官方 | 86.02 | 23.14 |
 
 以上为各配置五轮测量的中位数。
 
 ## 4. 观察
 
 - CUDA Graph Benchmark 测得的延迟显著低于普通 do_bench。
-    - 对于 [1,4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 27.8%，Pytorch 官方的 CUDA Graph 延迟约为普通 Benchmark 的 37%
-    - 对于 [1024, 4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 28.9%，Pytorch 官方的 CUDA Graph 延迟约为普通 Benchmark 的 25.4%
-- 当 Shape 增大时，Triton 与 PyTorch 官方实现的相对性能差距缩小。
+    - 对于 [1,4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 27.3%，PyTorch 官方约为 37.4%。
+    - 对于 [1024, 4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 28.3%，PyTorch 官方约为 23.7%。
+    - 对于 [4096, 4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 23.4%，PyTorch 官方约为 26.9%。
+- 当 Shape 增大时，do_bench 测试下 Triton 与 PyTorch 官方实现的相对性能差距缩小，但是 Triton 与 PyTorch 官方实现的 CUDA Graph 的性能差距没有线性变化。
 
 ## 5. 提出假设
 
@@ -217,7 +220,7 @@ def do_bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mod
 | return output | 返回 Python Tensor 对象 | 不执行 Python return |
 
 我们可以把创建输出内存和 python validation 进行预先处理，然后在循环中只启动同一个 RMSNorm Kernel，
-因此我们对代码进行重构，区分了 `rmsnorm_triton` 和 `rmsnorm_triton_into` 函数，然后在 validate=false 的情况下测量一下 rmsnorm_triton_into 的耗时。
+因此我们对代码进行重构，区分了 `rmsnorm_triton` 和 `rmsnorm_triton_into` 函数，然后在 `validate=false` 的情况下测量一下 rmsnorm_triton_into 的耗时。
 
 ```
 def rmsnorm_triton_into(
@@ -246,14 +249,31 @@ def rmsnorm_triton(
     return output
 ```
 
+| Shape | Implementation | do_bench (μs) | CUDA Graph (μs) |
+|---|---|---:|---:|
+| 1 × 4096 | Triton | 4.10 | 1.12 |
+| 1 × 4096 | Triton Into | 4.10 | 1.11 |
+| 1024 × 4096 | Triton | 20.48 | 5.80 |
+| 1024 × 4096 | Triton Into | 20.48 | 5.84 |
+| 4096 × 4096 | Triton | 76.80 | 17.99 |
+| 4096 × 4096 | Triton Into | 77.82 | 17.57 |
 
+可以看出 `rmsnorm_triton` 和 `rmsnorm_triton_into` 两者的延迟结果几乎一致，在 do_bench 
+下测量的延迟，并没有因为 Output 预先分配 和 validation 的移除发生变化。
+
+所以本条假设看起来不成立。
 
 ## 7. Next Actions
 
-
+- 用 Nsight Systems 分析 GPU Kernel 间的空闲间隔。
+- 用 Nsight Compute 分析 L2/DRAM Traffic。
 
 ## 8. Conclusion
 
 CUDA Graph Benchmark 和普通 do_bench 测得的延迟存在显著差异，说明测量方式会影响短 Kernel 的性能结果。
 
-目前尚未确定差异的具体来源，需要进一步 Profiling。
+现推测两种测量方式的差异由以下两点造成：
+- CPU 提交（CPU Launch Overhead）速率可能影响普通 Benchmark 的测量结果。
+- 两种 Benchmark 的 Cache Flush 和数据复用行为可能不同。
+
+目前尚未有确定的实验证据，需要进一步 Profiling。
