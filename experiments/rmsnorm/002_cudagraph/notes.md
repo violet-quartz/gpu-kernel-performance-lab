@@ -44,7 +44,7 @@
 
 ### H1: CPU 提交速率可能影响普通 Benchmark 的测量结果
 
-CUDA Graph 的重要作用是减少 CPU 每次提交 GPU 工作的成本。使用 CUDA Graph 减少了 CPU Launch Overhead，使得延迟降低。
+CUDA Graph 可以减少逐次提交 GPU 工作的 CPU 开销。如果普通 benchmark 中存在因提交不及时造成的 GPU 空闲，图重放可能降低测得的延迟；本实验是否存在这种情况仍需时间线验证。
 
 ```
 CPU → Launch Kernel 1
@@ -258,10 +258,29 @@ def rmsnorm_triton(
 | 4096 × 4096 | Triton | 76.80 | 17.99 |
 | 4096 × 4096 | Triton Into | 77.82 | 17.57 |
 
-可以看出 `rmsnorm_triton` 和 `rmsnorm_triton_into` 两者的延迟结果几乎一致，在 do_bench 
-下测量的延迟，并没有因为 Output 预先分配 和 validation 的移除发生变化。
+可以看出，预分配 Output 并跳过 Python Validation 后，do_bench 与 CUDA Graph Benchmark 上均未观察到稳定、可分辨的延迟改善。
 
-所以本条假设看起来不成立。
+从 CUDA Graph 的捕获和重放模式上来说，在 CUDA Graph Benchmark 上未观察到明显改善是预期的。
+
+而 do_bench 的指标也未获得明显改善的可能解释是： do_bench 使用 CUDA Event 测量 GPU 时间线上的耗时，不直接累计全部 Python 执行时间，因此移除这些 CPU 操作，不一定改变测量结果。
+
+从代码中可以看到 do_bench 的每轮顺序：
+
+```python
+clear_cache(cache)
+start_event[i].record()
+fn()
+end_event[i].record()
+```
+
+CPU 将这些操作提交到 stream 后，GPU 按顺序执行。可能出现这样的重叠：
+
+CPU：提交清缓存 → 提交 start → validation、分配、提交 kernel → 提交 end
+GPU：执行清缓存────────────→ start → kernel → end
+
+如果 GPU 执行清缓存期间，CPU 已经完成 validation、分配并提交 kernel，那么这些 CPU 开销就被前面的 GPU 工作掩盖了。 去掉它们会让 CPU 更早完成提交，却不会改变 start → end 的时间。这是根据当前 benchmark 结构作出的解释，是否确实如此，需要 Nsight Systems 时间线验证。
+
+另外 `empty_like` 也不等于每次重新向 CUDA 申请显存，预热后通常可以复用 PyTorch 缓存分配器中的内存；因此分配开销主要可能发生在 CPU 上，不会因为输出有几十 MB 就必然产生等量的 GPU 工作。可用 Nsight Systems 检查 CPU 分配路径、CUDA API 调用及其与 GPU 工作的重叠情况；用 Nsight Compute 分析 kernel 的 L2/DRAM 流量。
 
 ## 7. Next Actions
 
