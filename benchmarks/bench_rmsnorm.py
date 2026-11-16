@@ -7,7 +7,7 @@ from references.rmsnorm import rmsnorm_reference
 from kernels.triton.rmsnorm import rmsnorm_triton, rmsnorm_triton_into
 
 # shapes = [(1, 4096), (128, 4096), (1024, 4096), (128, 8192)]
-shapes = [(1, 4096), (1024, 4096)]
+shapes = [(1, 4096), (1024, 4096), (4096, 4096)]
 # data_types = [torch.float16, torch.bfloat16]
 data_types = [torch.float16]
 fns = [rmsnorm_reference, rmsnorm_triton]
