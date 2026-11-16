@@ -1,10 +1,10 @@
 # Experiment 002 — CUDA Graph Benchmark
 
-## 1. Objective
+## 1. 目标
 
 比较 `triton.testing.do_bench()` 和 `do_bench_cudagraph()` 测得的 RMSNorm 延迟，分析两种测量方法的差异。
 
-## 2. Environment
+## 2. 环境
 
 - GPU: NVIDIA RTX 4090
 - Shape: [1, 4096], [1024, 4096]
@@ -12,7 +12,7 @@
 - Software versions: PyTorch: 2.13.0+cu130, PyTorch CUDA: 13.0, Triton: 3.7.1
 - Code commit: 1bf414aa94665852df54c4f291d42d1d21b7c60d
 
-## 3. Results
+## 3. 实验结果
 
 | Shape | Implementation | do_bench (μs) | CUDA Graph (μs) |
 |---|---|---:|---:|
@@ -23,20 +23,40 @@
 
 以上为各配置五轮测量的中位数。
 
-## 4. Observations（实验观察）
+## 4. 观察
 
 - CUDA Graph Benchmark 测得的延迟显著低于普通 do_bench。
-    - 对于 [1,4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 27.8%。
-    - 对于 [1024, 4096]，
+    - 对于 [1,4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 27.8%，Pytorch 官方的 CUDA Graph 延迟约为普通 Benchmark 的 37%
+    - 对于 [1024, 4096]，Triton 的 CUDA Graph 延迟约为普通 Benchmark 的 28.9%，Pytorch 官方的 CUDA Graph 延迟约为普通 Benchmark 的 25.4%
 - 当 Shape 增大时，Triton 与 PyTorch 官方实现的相对性能差距缩小。
 
-## 5. Hypotheses（待验证假设）
+## 5. 提出假设
 
-- H1：CPU 提交速率可能影响普通 Benchmark 的测量结果。
+为什么 CUDA Graph Benchmark 测得的延迟显著低于普通 do_bench 呢？
+- H1：CPU 提交（CPU Launch Overhead）速率可能影响普通 Benchmark 的测量结果。
 - H2：两种 Benchmark 的 Cache Flush 和数据复用行为可能不同。
-- H3：Output Allocation 和地址复用方式可能影响实验结果。
+- H3：Output Allocation 和 Python validation 可能影响实验结果。
 
-## 6. Evidence and Limitations（证据与限制）
+## 6. 证据与限制
+
+### H1: CPU 提交速率可能影响普通 Benchmark 的测量结果
+
+CUDA Graph 的重要作用是减少 CPU 每次提交 GPU 工作的成本。使用 CUDA Graph 减少了 CPU Launch Overhead，使得延迟降低。
+
+```
+CPU → Launch Kernel 1
+CPU → Launch Kernel 2
+CPU → Launch Kernel 3
+```
+
+```
+CPU → Replay Graph
+             ├── Kernel 1
+             ├── Kernel 2
+             └── Kernel 3
+```
+
+### H2: 两种 Benchmark 的 Cache Flush 和数据复用行为可能不同
 
 ```python
 import inspect
@@ -45,6 +65,8 @@ import triton.testing
 print(inspect.getsource(triton.testing.do_bench))
 print(inspect.getsource(triton.testing.do_bench_cudagraph))
 ```
+
+通过上面的代码，打印两种 Benchmark 的具体实现：
 
 ```python
 def do_bench(fn, warmup=25, rep=100, grad_to_none=None, quantiles=None, return_mode="mean"):
@@ -179,9 +201,52 @@ def do_bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mod
         return _summarize_statistics(ret, quantiles, return_mode)
 ```
 
-目前只有延迟测量，没有 Nsight Systems 或 Nsight Compute 数据。
+可以看出在重复实验时，do_bench 每次运行函数前都会清理 L2 cache，而 do_bench_cudagraph 则没有这个操作，因此可以推断 do_bench_cudagraph 在连续执行相同 Kernel 时，数据更有机会留在 L2 中，而 do_bench 则会更频繁的从显存读取数据，导致 do_bench 测得的延迟增加。
 
-因此尚不能确定三个假设各自贡献了多少性能差异，也不能将两种 Benchmark 的时间差直接解释为 CPU Launch Overhead。
+### H3: Output Allocation 和 Python validation 可能影响实验结果
+
+查看 CUDA Graph 的捕获方式：捕获时 Python 函数会执行一次； `g.replay()` 时只重放捕获的 GPU 工作，不会重新执行整个 Python 函数。
+
+对于 `rmsnorm_triton`，
+
+| 部分 | 捕获阶段 | 每次 g.replay() |
+|---|---|---|
+| torch.empty_like(x) | 创建 Tensor，分配输出显存 | 复用同一块显存，不重新创建 Tensor |
+| Python validation，例如检查 shape、dtype、device | 执行检查 | 不再执行 |
+| Triton kernel | 记录 GPU 操作及参数 | 再次执行 kernel |
+| return output | 返回 Python Tensor 对象 | 不执行 Python return |
+
+我们可以把创建输出内存和 python validation 进行预先处理，然后在循环中只启动同一个 RMSNorm Kernel，
+因此我们对代码进行重构，区分了 `rmsnorm_triton` 和 `rmsnorm_triton_into` 函数，然后在 validate=false 的情况下测量一下 rmsnorm_triton_into 的耗时。
+
+```
+def rmsnorm_triton_into(
+    x:torch.Tensor, # [M, N]
+    weight: torch.Tensor, # [N]
+    output: torch.Tensor, # [M, N]
+    eps: float = 1e-6,
+    validate: bool = True):
+    if validate:
+        validate_rmsnorm_inputs(x, weight, eps)
+        if not x.is_cuda:
+            raise ValueError("x must be on CUDA")
+        validate_rmsnorm_output(output, x, weight)
+    M, N = x.shape
+    BLOCK_SIZE = triton.next_power_of_2(N)
+    grid = (M,)
+    rmsnorm_kernel[grid](x, output, weight, eps, N, BLOCK_SIZE)
+
+def rmsnorm_triton(
+    x: torch.Tensor, # [M, N]
+    weight: torch.Tensor, # [N]
+    eps: float = 1e-6
+) -> torch.Tensor:
+    output = torch.empty_like(x)
+    rmsnorm_triton_into(x, weight, output, eps)
+    return output
+```
+
+
 
 ## 7. Next Actions
 
