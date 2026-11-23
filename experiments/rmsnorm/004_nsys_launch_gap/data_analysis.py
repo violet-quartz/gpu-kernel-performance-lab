@@ -13,8 +13,7 @@ def stat_indicator(rows, name):
     print("Max:", max(data))
     print("P90:", sorted(data)[int(0.9 * (len(data) - 1))])
 
-def stat_normal_kernel_duration_and_gap():
-    db = "/Users/flora/Downloads/rmsnorm_launch_gap_2.sqlite"
+def stat_normal_kernel_duration_and_gap(db):
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
 
@@ -58,8 +57,7 @@ def stat_normal_kernel_duration_and_gap():
 
     conn.close()
 
-def stat_launch_api():
-    db = "/Users/flora/Downloads/rmsnorm_launch_gap_2.sqlite"
+def stat_launch_api(db):
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     sql = """
@@ -90,7 +88,10 @@ SELECT
     (end - start) / 1000.0 AS api_duration_us,
     (
         LEAD(start) OVER (ORDER BY start) - start
-    ) / 1000.0 AS launch_interval_us
+    ) / 1000.0 AS launch_interval_us,
+    (
+        LEAD(start) OVER (ORDER BY start) - end
+    ) / 1000.0 AS between_api_us
 FROM launch_api
 ORDER BY start;
 """
@@ -100,11 +101,11 @@ ORDER BY start;
 
     stat_indicator(rows, "api_duration_us")
     stat_indicator(rows, "launch_interval_us")
+    stat_indicator(rows, "between_api_us")
 
     conn.close()
 
-def stat_graph_kernel_duration_and_gap():
-    db = "/Users/flora/Downloads/rmsnorm_launch_gap_2.sqlite"
+def stat_graph_kernel_duration_and_gap(db):
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     sql = """
@@ -151,9 +152,13 @@ ORDER BY start;
     
 
 def main():
-    stat_normal_kernel_duration_and_gap()
-    stat_launch_api()
-    stat_graph_kernel_duration_and_gap()
+    db = "/Users/flora/Downloads/rmsnorm_launch_gap_2.sqlite"
+    print("*********Normal Launch**************")
+    stat_normal_kernel_duration_and_gap(db)
+    print("*********Launch API*****************")
+    stat_launch_api(db)
+    print("*********CUDA Graph*****************")
+    stat_graph_kernel_duration_and_gap(db)
 
 if __name__ == "__main__":
     main()
