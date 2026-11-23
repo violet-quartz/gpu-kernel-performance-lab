@@ -74,7 +74,7 @@ CPU 两次 cuLaunchKernelEx 开始时刻的间隔为 41.15 µs，约等于 Norma
 
 Normal Launch：约 95.2% 的序列时间花在 Kernel 之间。CUDA Graph：约 97.5% 的序列时间用于 Kernel 执行，Gap 约占 2.5%。
 
-另外，为了排除 Nsys 追踪插桩开销的影响，我们用 python 的 time.perf_counter() 分别统计 Normal Launch Kernel 和 CUDA Graph Kernel 运行 1000 次的耗时（experiments/rmsnorm/004_nsys_launch_gap/python_profile_launch_gap.py），结果为 Normal Launch 16.749 ms，CUDA Graph 1.746 ms，CUDA Graph 批量执行加速 9.60x，graph replay 的耗时确实显著降低。
+另外，为了排除 Nsys 追踪插桩开销的影响，我们用 python 的 time.perf_counter() 分别统计 Normal Launch Kernel 和 CUDA Graph Kernel 运行 1000 次的耗时（experiments/rmsnorm/004_nsys_launch_gap/python_profile_launch_gap.py），结果为 Normal Launch 16.749 ms，CUDA Graph 1.746 ms，CUDA Graph 批量执行加速 9.60x，graph replay 的耗时确实显著降低。 受 Nsys 插桩的影响，上面 nsys 的结果并不等同于 Python Wrapper 的真实固有开销。
 
 
 
