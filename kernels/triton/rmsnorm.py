@@ -29,6 +29,7 @@ def rmsnorm_triton_into(
     weight: torch.Tensor, # [N]
     output: torch.Tensor, # [M, N]
     eps: float = 1e-6,
+    num_warps: int = 4,
     validate: bool = True):
     if validate:
         validate_rmsnorm_inputs(x, weight, eps)
@@ -38,13 +39,16 @@ def rmsnorm_triton_into(
     M, N = x.shape
     BLOCK_SIZE = triton.next_power_of_2(N)
     grid = (M,)
-    rmsnorm_kernel[grid](x, output, weight, eps, N, BLOCK_SIZE)
+    rmsnorm_kernel[grid](x, output, weight, eps, N, 
+                         BLOCK_SIZE=BLOCK_SIZE,
+                         num_warps=num_warps)
 
 def rmsnorm_triton(
     x: torch.Tensor, # [M, N]
     weight: torch.Tensor, # [N]
-    eps: float = 1e-6
+    eps: float = 1e-6,
+    num_warps: int = 4
 ) -> torch.Tensor:
     output = torch.empty_like(x)
-    rmsnorm_triton_into(x, weight, output, eps)
+    rmsnorm_triton_into(x, weight, output, eps, num_warps)
     return output
