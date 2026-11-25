@@ -41,6 +41,7 @@ ncu --import rmsnorm_ncu_test.ncu-rep \
 | SM 数量 | 142 |
 | Waves Per SM | 0.11 |
 
+在 shape 为 [128, 4096] 的情况下，Achieved Occupancy 为 8.38%，远小于 Theoretical Occupancy，且Waves Per SM （整个 Grid 的 CTA 数量相对于 GPU 一次能容纳 CTA 的数量比）为 0.11 较低，都说明当前的并行度太低。下面我们保持 Triton 算子代码不动，改变 M 的值看一下测量结果。
 
 ```shell
 for M in 1 128 256 1024 4096; do
@@ -63,6 +64,7 @@ done
 | 1024 × 4096 | 16.38 μs | 48.81% | 13.26% | 56.55% | 26.90% |
 | 4096 × 4096 | 44.29 μs | 60.61% | 19.53% | 83.28% | 39.30% |
 
+
 ## 4. 观察
 
 - M=1、128 时，GPU 总吞吐利用率很低；M 增大后，Effective Bandwidth 和资源利用率明显提高。
@@ -73,6 +75,8 @@ done
 H1：小 Shape 受到并行工作量不足的限制
 
 H2：大 Shape 可能逐渐受到 DRAM 带宽限制
+
+H1 从上面的实验中已经得到了支持。下面我们关注一下 Memory Throughput，验证一下 H2。
 
 ## 6. 验证
 
@@ -115,8 +119,8 @@ done
 | L2 Read/Write Traffic | Read 68,265 sectors (2,184,480 B) / Write 32,867 sectors (1,051,744 B) | Read 1,090,777 sectors (34,904,864 B) / Write 1,049,164 sectors (33,573,248 B) |
 | DRAM Throughput | 21.32% | 83.28% |
 | Kernel Duration | 5.54 μs | 44.29 μs |
-从上面的结果中，我们提出第三个假设：
-H3：输出写入主要先保留在 L2，因此当前 Kernel 的 DRAM Write Bytes 为 0。
+
+从上面的结果中，我们看到当前 Kernel 的 DRAM Write Bytes 为 0， 因此我们认为输出写入主要先保留在 L2。
 
 下面再做两个实验：
 
@@ -145,6 +149,7 @@ PYTHONPATH=. ncu \
 | DRAM Throughput | 83.28% | 78.42% | -4.86 个百分点 |
 | Kernel Duration | 44.29 μs | 41.41 μs | -2.88 μs（约快 6.5%） |
 
+可以看到 Kernel Replay 前不刷新缓存的话，L2 Hit Rate 增高，与预期相同，受缓存策略的影响，DRAM Read/Write Bytes 和 L2 Read/Write Traffic 都有所变化，cache-control 的设置会对结果产生影响。
 
 实验二：
 将 M 进一步增大到 8192 和 16384，统一使用 `--cache-control all`：
@@ -174,5 +179,6 @@ done
 | DRAM Throughput | 82.50% | 92.65%（+10.15 个百分点） | 90.53%（+8.03 个百分点） |
 | Kernel Duration | 44.70 μs | 96.83 μs（+52.13 μs，+116.6%） | 249.60 μs（+204.90 μs，+458.4%） |
 
+可以看出，随着 M 的增大，DRAM Read/Write Bytes 不断增大，DRAM Throughput 接近峰值并略有下降（Kernel Duration 以比 DRAM Read/Write Bytes 更高的比例增大），说明当 M = 16384 时，已经受到了 DRAM 带宽的限制，“H2：大 Shape 可能逐渐受到 DRAM 带宽限制”得到了验证。
 
 
