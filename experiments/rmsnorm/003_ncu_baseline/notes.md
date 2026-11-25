@@ -2,12 +2,17 @@
 
 ## 1. 目标
 
+使用 Nsight Compute（NCU）分析 Triton RMSNorm Kernel 的硬件执行行为，识别潜在性能瓶颈，并为后续 Kernel 优化提供依据。
+
+本实验侧重性能诊断，不涉及 Kernel 实现层面的优化。
+
 ## 2. 环境
 
 - GPU: NVIDIA RTX 6000 Ada Generation
-- Shape: [128, 4096]
+- Baseline Shape: [128, 4096]
 - dtype: FP16
 - Software versions: PyTorch: 2.13.0+cu130, PyTorch CUDA: 13.0, Triton: 3.7.1
+- ncu version: 2025.3.1.0 (build 36398880) (public-release)
 - Code commit: f58b504ee2108d7a9be7f61aedd933a1fd430996
 
 ## 3. 实验结果
@@ -41,7 +46,7 @@ ncu --import rmsnorm_ncu_test.ncu-rep \
 | SM 数量 | 142 |
 | Waves Per SM | 0.11 |
 
-在 shape 为 [128, 4096] 的情况下，Achieved Occupancy 为 8.38%，远小于 Theoretical Occupancy，且Waves Per SM （整个 Grid 的 CTA 数量相对于 GPU 一次能容纳 CTA 的数量比）为 0.11 较低，都说明当前的并行度太低。下面我们保持 Triton 算子代码不动，改变 M 的值看一下测量结果。
+在 shape 为 [128, 4096] 的情况下，Achieved Occupancy 为 8.38%，远小于 Theoretical Occupancy，且Waves Per SM （反映一个 Grid 相对于 GPU 理论上同时可驻留的 CTA 总容量，需要多少轮 Wave 才能执行完）为 0.11 较低，都说明当前的并行度太低。下面我们保持 Triton 算子代码不动，改变 M 的值看一下测量结果。
 
 ```shell
 for M in 1 128 256 1024 4096; do
@@ -56,18 +61,19 @@ for M in 1 128 256 1024 4096; do
 done
 ```
 实验结果：
-| Shape | Duration | Achieved Occupancy | SM Throughput | DRAM Throughput | L2 Throughput |
-|---|---:|---:|---:|---:|---:|
-| 1 × 4096 | 4.32 μs | 8.39% | 0.05% | 0.59% | 0.63% |
-| 128 × 4096 | 5.54 μs | 8.09% | 5.28% | 21.32% | 13.65% |
-| 256 × 4096 | 7.33 μs | 13.70% | 7.76% | 31.96% | 17.45% |
-| 1024 × 4096 | 16.38 μs | 48.81% | 13.26% | 56.55% | 26.90% |
-| 4096 × 4096 | 44.29 μs | 60.61% | 19.53% | 83.28% | 39.30% |
+| Shape | Duration | Achieved Occupancy | SM Throughput | DRAM Throughput | L2 Throughput | Logical Effective BW | 
+|---|---:|---:|---:|---:|---:|---:|
+| 1 × 4096 | 4.32 μs | 8.39% | 0.05% | 0.59% | 0.63% | 5.69 GB/s |
+| 128 × 4096 | 5.54 μs | 8.09% | 5.28% | 21.32% | 13.65% | 567.82 GB/s |
+| 256 × 4096 | 7.33 μs | 13.70% | 7.76% | 31.96% | 17.45% | 858.32 GB/s |
+| 1024 × 4096 | 16.38 μs | 48.81% | 13.26% | 56.55% | 26.90% | 1536.38 GB/s |
+| 4096 × 4096 | 44.29 μs | 60.61% | 19.53% | 83.28% | 39.30% | 2272.82 GB/s |
 
+其中 Logical Effective Bandwidth = 6MN / kernel_duration，Kernel 处理逻辑数据的效率。
 
 ## 4. 观察
 
-- M=1、128 时，GPU 总吞吐利用率很低；M 增大后，Effective Bandwidth 和资源利用率明显提高。
+- M=1、128 时，GPU 总吞吐利用率很低；M 增大后，Effective BW 和资源利用率明显提高。
 - M=4096 时，DRAM Throughput 已达到 83.28%，明显高于其他 Shape。
 
 ## 5. 提出假设
@@ -120,7 +126,7 @@ done
 | DRAM Throughput | 21.32% | 83.28% |
 | Kernel Duration | 5.54 μs | 44.29 μs |
 
-从上面的结果中，我们看到当前 Kernel 的 DRAM Write Bytes 为 0， 因此我们认为输出写入主要先保留在 L2。
+从上面的结果中，我们看到在采集窗口内没有观察到 DRAM 写入流量，而 L2 的 Write Traffic 与 Output 大小相近，因此我们假设输出写入保留在了 L2。
 
 下面再做两个实验：
 
@@ -151,6 +157,8 @@ PYTHONPATH=. ncu \
 
 可以看到 Kernel Replay 前不刷新缓存的话，L2 Hit Rate 增高，与预期相同，受缓存策略的影响，DRAM Read/Write Bytes 和 L2 Read/Write Traffic 都有所变化，cache-control 的设置会对结果产生影响。
 
+注意：NCU 的 Kernel Replay 可能产生与真实应用不同的缓存状态，上面这些变化表明 Profiling 对缓存状态敏感，但不能把 6.5% 的 Duration 差异直接认定为实际应用中缓存预热带来的性能收益。
+
 实验二：
 将 M 进一步增大到 8192 和 16384，统一使用 `--cache-control all`：
 
@@ -179,6 +187,19 @@ done
 | DRAM Throughput | 82.50% | 92.65%（+10.15 个百分点） | 90.53%（+8.03 个百分点） |
 | Kernel Duration | 44.70 μs | 96.83 μs（+52.13 μs，+116.6%） | 249.60 μs（+204.90 μs，+458.4%） |
 
-可以看出，随着 M 的增大，DRAM Read/Write Bytes 不断增大，DRAM Throughput 接近峰值并略有下降（Kernel Duration 以比 DRAM Read/Write Bytes 更高的比例增大），说明当 M = 16384 时，已经受到了 DRAM 带宽的限制，“H2：大 Shape 可能逐渐受到 DRAM 带宽限制”得到了验证。
+我们通过上面的值计算一下 DRAM 的平均带宽：
 
+| M | DRAM 总流量 | Duration | DRAM 平均带宽 |
+|---|---:|---:|---:|
+| 4096 | 33.57 MB | 44.70 μs | 751 GB/s |
+| 8192 | 81.70 MB | 96.83 μs | 844 GB/s |
+| 16384 | 205.82 MB | 249.60 μs | 825 GB/s |
+
+随着 M 从 4096 增大到 16384，DRAM Read/Write Traffic 明显增加，DRAM Throughput 从约 82.5% 上升至 90% 左右。
+
+根据 DRAM Read/Write Bytes 和 Kernel Duration 计算，M=8192 和 M=16384 时的实际 DRAM 平均带宽分别约为 844 GB/s 和 825 GB/s，已经接近平台期。
+
+当 M 从 8192 增加到 16384 时，DRAM 总流量增加约 2.52 倍，Kernel Duration 增加约 2.58 倍，两者近似同比例增长。
+
+这些现象强烈支持 H2：对于较大的 Shape，RMSNorm 的性能逐渐受到 DRAM 带宽限制。但由于尚未完成其他 Kernel 配置的对照实验，不能认定 DRAM 带宽是唯一瓶颈或当前实现已经达到最优。
 
