@@ -24,7 +24,7 @@ def main():
         default=4
     )
     parser.add_argument(
-        "--block_m",
+        "--BLOCK_M",
         type=int,
         default=2
     )
@@ -36,7 +36,7 @@ def main():
     args = parser.parse_args()
     M = args.M
     num_warps = args.num_warps
-    block_m = args.block_m
+    block_m = args.BLOCK_M
     if M <= 0:
         parser.error("--M must be positive")
     if num_warps <= 0:
@@ -67,7 +67,7 @@ def main():
             writer.writerow(("shape", "num_warps", "block_m", "run", "latency_us"))
         for run in range(1, 4):
             latency_us = triton.testing.do_bench_cudagraph(
-                lambda: rmsnorm_triton_into(
+                lambda: rmsnorm_triton_2d_into(
                     x,
                     weight,
                     output,
