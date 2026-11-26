@@ -1,4 +1,6 @@
 import argparse
+import csv
+from pathlib import Path
 
 import torch
 from kernels.triton.rmsnorm import rmsnorm_triton_into
@@ -20,6 +22,11 @@ def main():
         "--num_warps",
         type=int,
         default=4
+    )
+    parser.add_argument(
+        "--output",
+        default=str(Path(__file__).with_name("results.csv")),
+        help="CSV file for per-run latency results.",
     )
     args = parser.parse_args()
     M = args.M
@@ -45,12 +52,29 @@ def main():
     torch.cuda.synchronize()
 
     # CUDA Graph bench
-    latency_us = triton.testing.do_bench_cudagraph(
-                                lambda: rmsnorm_triton_into(x, weight, output, eps=eps, num_warps=num_warps, validate=False),
-                                rep=500,
-                                return_mode=return_mode
-                            ) * 1000
-    print(f'shape=({M}, 4096), num_warps={num_warps}, latency median={latency_us} us.')
+    print(f'\nshape=({M}, 4096), num_warps={num_warps}, latency median:')
+    output_path = Path(args.output)
+    with output_path.open("a", newline="", encoding="utf-8") as results_file:
+        writer = csv.writer(results_file)
+        if output_path.stat().st_size == 0:
+            writer.writerow(("shape", "num_warps", "run", "latency_us"))
+        for run in range(1, 4):
+            latency_us = triton.testing.do_bench_cudagraph(
+                lambda: rmsnorm_triton_into(
+                    x,
+                    weight,
+                    output,
+                    eps=eps,
+                    num_warps=num_warps,
+                    validate=False,
+                ),
+                rep=500,
+                return_mode=return_mode,
+            ) * 1000
+            writer.writerow((f"{M}x{N}", num_warps, run, f"{latency_us:.6f}"))
+            results_file.flush()
+            print(f"{latency_us:.2f} us", end=' ')
+    print('\n')
 
 if __name__ == "__main__":
     main()
