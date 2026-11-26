@@ -32,6 +32,7 @@ def rmsnorm_triton_2d_into(
     output: torch.Tensor, # [M, N]
     eps: float = 1e-6,
     num_warps: int = 4,
+    block_m: int = 2,
     validate: bool = True):
     if validate:
         validate_rmsnorm_inputs(x, weight, eps)
@@ -39,7 +40,7 @@ def rmsnorm_triton_2d_into(
             raise ValueError("x must be on CUDA")
         validate_rmsnorm_output(output, x, weight)
     M, N = x.shape
-    BLOCK_M = 2
+    BLOCK_M = block_m
     BLOCK_N = triton.next_power_of_2(N)
     grid = (triton.cdiv(M, BLOCK_M), )
     rmsnorm_2d_kernel[grid](x, output, weight, eps, M, N, 
@@ -51,8 +52,9 @@ def rmsnorm_triton_2d(
     x: torch.Tensor, # [M, N]
     weight: torch.Tensor, # [N]
     eps: float = 1e-6,
-    num_warps: int = 4
+    num_warps: int = 4,
+    block_m: int = 2
 ) -> torch.Tensor:
     output = torch.empty_like(x)
-    rmsnorm_triton_2d_into(x, weight, output, eps, num_warps)
+    rmsnorm_triton_2d_into(x, weight, output, eps, num_warps, block_m)
     return output
