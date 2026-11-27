@@ -36,6 +36,11 @@ def main():
     with open(f"rmsnorm_m{BLOCK_M}.ptx", "w") as f:
         f.write(compiled.asm["ptx"])
 
+    # Load the binary so the driver can report register usage without a launch.
+    compiled._init_handles()
     print(f"register count={compiled.n_regs}")
     print(f"shared memory={compiled.metadata.shared} bytes")
     print(f"available asm: {list(compiled.asm.keys())}")
+
+if __name__ == '__main__':
+    main()
