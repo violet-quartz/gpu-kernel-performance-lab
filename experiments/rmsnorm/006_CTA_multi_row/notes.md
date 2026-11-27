@@ -11,7 +11,7 @@
 - dtype: FP16
 - Software versions: PyTorch: 2.13.0+cu130, PyTorch CUDA: 13.0, Triton: 3.7.1
 - ncu version: 2025.3.1.0 (build 36398880) (public-release)
-- Code commit: f1d5e48d46ff87498fc76774d1de5f1ddebd6013
+- Code commit: 1cc42a5119c8c2845f59598225129000a8df2482
 
 ## 3. 实验
 
